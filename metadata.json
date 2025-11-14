@@ -1,7 +1,5 @@
 {
-  "name": "AI Multi-Modal Analyzer",
-  "description": "An application that classifies uploaded or captured images into categories—Network Diagram, Fruit, or General—and executes specialized analysis pipelines for each using the Gemini API.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "name": "Tournament Management System",
+  "description": "An application to manage tournament setup, players, fixtures, and scores for various sports.",
+  "requestFramePermissions": []
 }
