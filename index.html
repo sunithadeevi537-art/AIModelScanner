@@ -9,9 +9,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load React and ReactDOM from CDNs -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Load Babel for JSX transformation in the browser. NOTE: This impacts performance due to client-side transpilation. -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         body {
             background-color: #0f172a; /* bg-slate-900 */
@@ -109,21 +109,12 @@
             background-color: #334155; /* bg-slate-700 */
         }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0"
-  }
-}
-</script>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
+        // Start of Babel script
         const { useState, useCallback, useEffect, useRef } = React;
         const ReactDOM = window.ReactDOM;
 
@@ -155,18 +146,32 @@
         const getLocalStorage = (key, defaultValue) => {
             try {
                 const item = localStorage.getItem(key);
-                return item ? JSON.parse(item) : defaultValue;
+                console.log(`[LocalStorage] get item "${key}": raw string:`, item);
+                if (item === null) {
+                    return defaultValue;
+                }
+                const parsedItem = JSON.parse(item);
+                console.log(`[LocalStorage] get item "${key}": parsed:`, parsedItem);
+                return parsedItem;
             } catch (error) {
-                console.error(`Error reading from localStorage key "${key}":`, error);
+                console.error(`[LocalStorage] Error reading or parsing from localStorage key "${key}":`, error);
                 return defaultValue;
             }
         };
 
         const setLocalStorage = (key, value) => {
             try {
-                localStorage.setItem(key, JSON.stringify(value));
+                const stringifiedValue = JSON.stringify(value);
+                console.log(`[LocalStorage] set item "${key}": stringified:`, stringifiedValue);
+                localStorage.setItem(key, stringifiedValue);
+                console.log(`[LocalStorage] set item "${key}": successfully saved.`);
             } catch (error) {
-                console.error(`Error writing to localStorage key "${key}":`, error);
+                console.error(`[LocalStorage] Error writing to localStorage key "${key}":`, error);
+                if (error instanceof DOMException && (error.code === 22 || error.name === 'QuotaExceededError')) {
+                    alert('Local storage limit exceeded. Please clear some data or use a different browser.');
+                } else if (error instanceof DOMException && error.name === 'SecurityError') {
+                    alert('Local storage access denied. Please ensure you are not in private browsing mode.');
+                }
             }
         };
 
@@ -292,13 +297,16 @@
 
         // --- UI Components ---
 
-        const AppHeader = ({ isAdmin, onLogout, viewMode, setViewMode }) => {
+        const AppHeader = ({ isAdmin, onLogout, viewMode, setViewMode, publishStatus }) => {
             const LogoIcon = () => (
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104l-2.286 9.144a3.75 3.75 0 003.75 4.498h1.5A3.75 3.75 0 0016.5 12.25l-2.286-9.144a3.75 3.75 0 00-4.464 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.002 9.002 0 008.13-5.253M3.87 15.747A9.002 9.002 0 0012 21" />
                 </svg>
             );
+
+            const statusColor = publishStatus === 'Published' ? 'bg-green-600' : publishStatus === 'Publishing...' ? 'bg-yellow-600' : 'bg-slate-600';
+            const statusText = publishStatus;
 
             return (
                 <header className="bg-slate-900/70 backdrop-blur-lg p-4 border-b border-slate-700 sticky top-0 z-10">
@@ -308,6 +316,11 @@
                             <h1 className="text-2xl font-bold text-slate-100 tracking-tight">
                                 Tournament Manager
                             </h1>
+                            {isAdmin && (
+                                <span className={`ml-3 px-3 py-1 text-xs font-semibold text-white rounded-full ${statusColor}`} aria-label={`Publishing status: ${statusText}`}>
+                                    {statusText}
+                                </span>
+                            )}
                         </div>
                         {isAdmin && (
                             <div className="flex items-center gap-4">
@@ -1122,8 +1135,8 @@
             );
         };
 
-        const AdminDashboard = ({ tournamentData, setTournamentData, onPublish }) => {
-            const [isPublishing, setIsPublishing] = useState(false); // New state for loading indicator
+        const AdminDashboard = ({ tournamentData, setTournamentData, onPublish, isPublishing, setIsPublishing }) => {
+            // isPublishing state is now managed by the parent App component
 
             const saveTournamentSettings = (newSettings) => {
                 setTournamentData(prev => ({ ...prev, settings: newSettings }));
@@ -1221,7 +1234,7 @@
                     const existingFixtures = prev.fixtures.filter(f => !(f.category === category && f.tournamentType === type));
                     return { ...prev, fixtures: [...existingFixtures, newCategoryFixture] };
                 });
-                alert('Fixtures generated successfully!');
+                alert('Fixtures generated successfully! Now, click "Publish Tournament to Players" at the bottom to make them visible!');
             };
 
             const uploadCustomFixtures = (customFixtures) => {
@@ -1257,19 +1270,19 @@
                 }));
             };
 
-            const handlePublishClick = async () => { // Made async to simulate potential delay
-                if (window.confirm('Are you sure you want to publish the current tournament data to players? This will make it publicly visible.')) {
-                    setIsPublishing(true); // Start loading state
-                    try {
-                        // Simulate API call or a heavy operation
-                        await new Promise(resolve => setTimeout(resolve, 500)); 
-                        onPublish();
-                    } catch (error) {
-                        console.error("Failed to publish tournament:", error);
-                        alert("Failed to publish tournament. Please try again.");
-                    } finally {
-                        setIsPublishing(false); // End loading state
-                    }
+            const handlePublishClick = async () => {
+                // Removed window.confirm as per previous user request. Publish directly.
+                console.log('AdminDashboard: handlePublishClick - Initiating publish process.');
+                setIsPublishing(true); // Start loading state
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate API call or heavy operation
+                    onPublish(); // This updates tournamentData.isPublished in App
+                    alert('Tournament successfully published to players!'); // Success message after publish
+                } catch (error) {
+                    console.error("Failed to publish tournament:", error);
+                    alert("Failed to publish tournament. Please try again.");
+                } finally {
+                    setIsPublishing(false); // End loading state
                 }
             };
 
@@ -1279,6 +1292,13 @@
                                tournamentData.settings.categories.length > 0 &&
                                tournamentData.players.length > 0 &&
                                tournamentData.fixtures.length > 0;
+
+            const publishDisabledReason = !tournamentData.settings.name.trim() ? 'Complete tournament name in settings.' :
+                                          tournamentData.settings.types.length === 0 ? 'Select tournament types in settings.' :
+                                          tournamentData.settings.categories.length === 0 ? 'Select player categories in settings.' :
+                                          tournamentData.players.length === 0 ? 'Add players.' :
+                                          tournamentData.fixtures.length === 0 ? 'Generate or upload fixtures.' :
+                                          '';
 
             return (
                 <div className="space-y-8">
@@ -1307,31 +1327,86 @@
                     >
                         {isPublishing ? 'Publishing...' : 'Publish Tournament to Players'}
                     </button>
+                    {!canPublish && publishDisabledReason && (
+                        <p className="text-red-400 text-sm text-center" role="status">
+                            Cannot publish: {publishDisabledReason}
+                        </p>
+                    )}
                 </div>
             );
         };
 
-        const PlayerView = ({ tournamentData }) => {
-            console.log('PlayerView: Received tournamentData.isPublished:', tournamentData?.isPublished);
-            const getPlayerName = useCallback((playerId) => {
-                const player = tournamentData.players.find(p => p.id === playerId);
-                return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
-            }, [tournamentData.players]);
+        const PlayerView = () => { // No longer receives tournamentData as a prop, fetches directly
+            const [localTournamentData, setLocalTournamentData] = useState(null);
 
-            if (!tournamentData || !tournamentData.isPublished || !tournamentData.settings.name) {
+            const fetchTournamentData = useCallback(() => {
+                const storedData = getLocalStorage(LS_TOURNAMENT_DATA, null);
+                console.log('PlayerView: Fetched from localStorage. isPublished:', storedData?.isPublished, 'Settings Name:', storedData?.settings?.name, 'Full Data:', storedData);
+                setLocalTournamentData(storedData);
+            }, []);
+
+            useEffect(() => {
+                fetchTournamentData();
+            }, [fetchTournamentData]); // Fetch once on mount
+
+            // Re-fetch if localStorage changes (e.g., admin publishes)
+            useEffect(() => {
+                const handleStorageChange = (event) => {
+                    // Only react to changes in our specific key or if event.key is null (change in current tab/same origin)
+                    if (event.key === LS_TOURNAMENT_DATA || event.key === null) {
+                        console.log('PlayerView: localStorage "storage" event fired. Re-fetching data.');
+                        fetchTournamentData();
+                    }
+                };
+                window.addEventListener('storage', handleStorageChange);
+                return () => window.removeEventListener('storage', handleStorageChange);
+            }, [fetchTournamentData]);
+
+            // Define getPlayerName here, unconditionally, before any early returns
+            const getPlayerName = useCallback((playerId) => {
+                // Safely access players array even if localTournamentData is null or players is undefined
+                const playersArray = localTournamentData?.players || [];
+                const player = playersArray.find(p => p.id === playerId);
+                return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
+            }, [localTournamentData]); // Depend on the entire localTournamentData object
+
+
+            if (!localTournamentData || !localTournamentData.settings || !localTournamentData.settings.name) {
+                // No tournament data or basic settings are missing
                 return (
                     <div className="min-h-[calc(100vh-80px)] flex flex-col items-center justify-center text-slate-400">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104l-2.286 9.144a3.75 3.75 0 003.75 4.498h1.5A3.75 3.75 0 0016.5 12.25l-2.286-9.144a3.75 3.75 0 00-4.464 0z" />
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.002 9.002 0 008.13-5.253M3.87 15.747A9.002 9.002 0 0012 21" />
                         </svg>
-                        <h2 className="text-2xl font-bold mb-2">No Tournament Published Yet</h2>
+                        <h2 className="text-2xl font-bold mb-2">No Tournament Data Available</h2>
+                        <p className="text-lg">An administrator needs to set up and publish a tournament.</p>
+                    </div>
+                );
+            }
+
+            if (!localTournamentData.isPublished) {
+                // Tournament data exists, but it's not published
+                 return (
+                    <div className="min-h-[calc(100vh-80px)] flex flex-col items-center justify-center text-slate-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104l-2.286 9.144a3.75 3.75 0 003.75 4.498h1.5A3.75 3.75 0 0016.5 12.25l-2.286-9.144a3.75 3.75 0 00-4.464 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.002 9.002 0 008.13-5.253M3.87 15.747A9.002 9.002 0 0012 21" />
+                        </svg>
+                        <h2 className="text-2xl font-bold mb-2">Tournament In Draft Mode</h2>
+                        <p className="text-lg">This tournament has not yet been published by the administrator.</p>
                         <p className="text-lg">Check back later for tournament details and fixtures!</p>
                     </div>
                 );
             }
 
-            const groupedPlayers = tournamentData.players.reduce((acc, player) => {
+
+            // const getPlayerName = useCallback((playerId) => { // This was moved
+            //     const player = localTournamentData.players.find(p => p.id === playerId);
+            //     return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
+            // }, [localTournamentData.players]);
+
+            const groupedPlayers = localTournamentData.players.reduce((acc, player) => {
                 if (!acc[player.mobile]) {
                     acc[player.mobile] = [];
                 }
@@ -1342,16 +1417,16 @@
             return (
                 <div className="container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
                     <h2 className="text-4xl font-bold text-sky-400 mb-6 text-center">
-                        {tournamentData.settings.name}
+                        {localTournamentData.settings.name}
                     </h2>
 
                     <div className="bg-slate-800 p-6 rounded-lg shadow-lg">
                         <h3 className="text-2xl font-semibold text-slate-100 mb-4">Tournament Details</h3>
                         <p className="text-slate-300 mb-2">
-                            <span className="font-medium text-slate-200">Types:</span> {tournamentData.settings.types.join(', ')}
+                            <span className="font-medium text-slate-200">Types:</span> {localTournamentData.settings.types.join(', ')}
                         </p>
                         <p className="text-slate-300">
-                            <span className="font-medium text-slate-200">Categories:</span> {tournamentData.settings.categories.join(', ')}
+                            <span className="font-medium text-slate-200">Categories:</span> {localTournamentData.settings.categories.join(', ')}
                         </p>
                     </div>
 
@@ -1403,11 +1478,11 @@
 
                     <div className="bg-slate-800 p-6 rounded-lg shadow-lg">
                         <h3 className="2xl font-semibold text-slate-100 mb-4">Match Fixtures</h3>
-                        {tournamentData.fixtures.length === 0 ? (
+                        {localTournamentData.fixtures.length === 0 ? (
                             <p className="text-slate-400">No fixtures published yet.</p>
                         ) : (
                             <div className="space-y-6">
-                                {tournamentData.fixtures.map(catFix => (
+                                {localTournamentData.fixtures.map(catFix => (
                                     <div key={`${catFix.category}-${catFix.tournamentType}`} className="bg-slate-700 p-4 rounded-lg">
                                         <h4 className="text-xl font-semibold text-slate-100 mb-3">{catFix.category} - {catFix.tournamentType}</h4>
                                         {catFix.groups.map(group => (
@@ -1479,10 +1554,12 @@
         const App = () => {
             const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(getLocalStorage(LS_ADMIN_LOGGED_IN, false));
             const [viewMode, setViewMode] = useState(isAdminLoggedIn ? 'admin' : 'player'); // 'admin-login', 'admin', 'player'
+            const [isPublishing, setIsPublishing] = useState(false); // Lifted state
 
             const [tournamentData, setTournamentData] = useState(() => {
                 const storedData = getLocalStorage(LS_TOURNAMENT_DATA, null);
-                return storedData || {
+                // Ensure isPublished is always present and default settings are consistent
+                const defaultTournamentData = {
                     settings: {
                         name: 'New Tournament',
                         types: [TournamentType.MEN_SINGLES],
@@ -1492,6 +1569,15 @@
                     fixtures: [],
                     isPublished: false,
                 };
+                if (storedData) {
+                    return {
+                        ...defaultTournamentData, // Ensure default structure if parts are missing
+                        ...storedData,
+                        settings: { ...defaultTournamentData.settings, ...storedData.settings }, // Merge settings
+                        isPublished: storedData.hasOwnProperty('isPublished') ? storedData.isPublished : false // Ensure flag
+                    };
+                }
+                return defaultTournamentData;
             });
 
             // Persist admin login state
@@ -1501,7 +1587,7 @@
 
             // Persist tournament data
             useEffect(() => {
-                console.log('App: useEffect - Saving tournamentData to localStorage. isPublished:', tournamentData.isPublished);
+                console.log('App: useEffect - Saving tournamentData to localStorage. isPublished:', tournamentData.isPublished, 'Data:', tournamentData);
                 setLocalStorage(LS_TOURNAMENT_DATA, tournamentData);
             }, [tournamentData]);
 
@@ -1516,7 +1602,7 @@
             };
 
             const handlePublishTournament = () => {
-                console.log('App: handlePublishTournament - Initial tournamentData.isPublished:', tournamentData.isPublished);
+                console.log('App: handlePublishTournament - START. Current tournamentData:', JSON.stringify(tournamentData));
 
                 // Perform checks before publishing (these should ideally match `canPublish` in AdminDashboard)
                 if (tournamentData.settings.name.trim() === '') {
@@ -1539,21 +1625,28 @@
                     alert('Publish failed: Please generate or upload fixtures.');
                     return;
                 }
-
-                setTournamentData(prev => {
-                    const newState = { ...prev, isPublished: true };
-                    console.log('App: handlePublishTournament - Inside setTournamentData callback. newState.isPublished:', newState.isPublished);
-                    return newState;
-                });
-                // The alert will be triggered AFTER the state update has been scheduled.
-                // The actual state change and useEffect will fire shortly after.
-                alert('Tournament published successfully!');
-                console.log('App: handlePublishTournament - After alert. Current tournamentData.isPublished (may be old state):', tournamentData.isPublished);
+                
+                const newState = { ...tournamentData, isPublished: true };
+                setTournamentData(newState); // Update component state, which will trigger useEffect for persistence
+                console.log('App: handlePublishTournament - END. newState.isPublished:', newState.isPublished, 'TournamentData after setTournamentData:', JSON.stringify(newState));
             };
+
+            // Derived publish status for AppHeader
+            const publishStatus = isPublishing
+                ? 'Publishing...'
+                : tournamentData.isPublished
+                    ? 'Published'
+                    : 'Draft';
 
             return (
                 <div className="min-h-screen bg-slate-900 text-slate-200">
-                    <AppHeader isAdmin={isAdminLoggedIn} onLogout={handleAdminLogout} viewMode={viewMode} setViewMode={setViewMode} />
+                    <AppHeader
+                        isAdmin={isAdminLoggedIn}
+                        onLogout={handleAdminLogout}
+                        viewMode={viewMode}
+                        setViewMode={setViewMode}
+                        publishStatus={publishStatus} // Pass derived status
+                    />
                     <main className="container mx-auto p-4 sm:p-6 lg:p-8">
                         {viewMode === 'admin-login' && !isAdminLoggedIn && (
                             <AdminLogin onLogin={handleAdminLogin} />
@@ -1563,10 +1656,12 @@
                                 tournamentData={tournamentData}
                                 setTournamentData={setTournamentData}
                                 onPublish={handlePublishTournament}
+                                isPublishing={isPublishing} // Pass lifted state
+                                setIsPublishing={setIsPublishing} // Pass setter for lifted state
                             />
                         )}
                         {viewMode === 'player' && (
-                            <PlayerView tournamentData={tournamentData} />
+                            <PlayerView />
                         )}
                     </main>
                 </div>
