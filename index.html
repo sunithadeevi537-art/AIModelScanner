@@ -146,12 +146,13 @@
         const getLocalStorage = (key, defaultValue) => {
             try {
                 const item = localStorage.getItem(key);
-                console.log(`[LocalStorage] get item "${key}": raw string:`, item);
+                // console.log(`[LocalStorage] get item "${key}": raw string:`, item); // Excessive logging
                 if (item === null) {
+                    // console.log(`[LocalStorage] get item "${key}": no item found, returning default.`, defaultValue); // Excessive logging
                     return defaultValue;
                 }
                 const parsedItem = JSON.parse(item);
-                console.log(`[LocalStorage] get item "${key}": parsed:`, parsedItem);
+                // console.log(`[LocalStorage] get item "${key}": parsed:`, parsedItem); // Excessive logging
                 return parsedItem;
             } catch (error) {
                 console.error(`[LocalStorage] Error reading or parsing from localStorage key "${key}":`, error);
@@ -162,9 +163,9 @@
         const setLocalStorage = (key, value) => {
             try {
                 const stringifiedValue = JSON.stringify(value);
-                console.log(`[LocalStorage] set item "${key}": stringified:`, stringifiedValue);
+                // console.log(`[LocalStorage] set item "${key}": stringified:`, stringifiedValue); // Excessive logging
                 localStorage.setItem(key, stringifiedValue);
-                console.log(`[LocalStorage] set item "${key}": successfully saved.`);
+                // console.log(`[LocalStorage] set item "${key}": successfully saved.`); // Excessive logging
             } catch (error) {
                 console.error(`[LocalStorage] Error writing to localStorage key "${key}":`, error);
                 if (error instanceof DOMException && (error.code === 22 || error.name === 'QuotaExceededError')) {
@@ -228,70 +229,61 @@
         };
 
         const groupPlayersRandomly = (playersInCategories, minGroupSize, maxGroupSize) => {
-            const groupedPlayers = {};
+            const finalGroupedPlayers = {};
+
             for (const category in playersInCategories) {
-                groupedPlayers[category] = {};
+                finalGroupedPlayers[category] = {};
                 for (const type in playersInCategories[category]) {
-                    const playerIds = [...playersInCategories[category][type]]; // Clone array to shuffle
+                    const playerIds = [...playersInCategories[category][type]];
+                    const totalPlayers = playerIds.length;
+
+                    // 1. Basic Validation: Not enough players for even one minimum-sized group
+                    if (totalPlayers < minGroupSize) {
+                        console.warn(`Not enough players for ${category} - ${type}. Need at least ${minGroupSize}, found ${totalPlayers}. Skipping grouping.`);
+                        finalGroupedPlayers[category][type] = [];
+                        continue;
+                    }
+
+                    // 2. Determine valid range for number of groups (k)
+                    const minAllowedGroups = Math.ceil(totalPlayers / maxGroupSize);
+                    const maxAllowedGroups = Math.floor(totalPlayers / minGroupSize);
+
+                    if (minAllowedGroups > maxAllowedGroups) {
+                        console.warn(`Impossible to form valid groups for ${category} - ${type} with ${totalPlayers} players (min: ${minGroupSize}, max: ${maxGroupSize}). Constraints cannot be met.`);
+                        finalGroupedPlayers[category][type] = [];
+                        continue;
+                    }
+
+                    // 3. Choose number of groups (k) within the valid range.
+                    // We choose the smallest possible number of groups (minAllowedGroups) to make groups as large as possible
+                    // (closer to maxGroupSize), which minimizes the total number of matches.
+                    const numGroups = minAllowedGroups; 
+                    
                     const shuffledPlayerIds = playerIds.sort(() => 0.5 - Math.random()); // Simple shuffle
 
-                    const groups = [];
-                    let groupCounter = 0;
+                    const groups = Array.from({ length: numGroups }, (_, i) => ({
+                        id: generateUUID(),
+                        name: `Group ${String.fromCharCode(65 + i)}`,
+                        playerIds: [],
+                    }));
 
-                    while (shuffledPlayerIds.length > 0) {
-                        let currentGroupPlayers = [];
-                        // Fill current group up to maxGroupSize or remaining players
-                        while (currentGroupPlayers.length < maxGroupSize && shuffledPlayerIds.length > 0) {
-                            currentGroupPlayers.push(shuffledPlayerIds.shift());
-                        }
-
-                        // Special handling for the last few players
-                        if (shuffledPlayerIds.length === 0 && currentGroupPlayers.length < minGroupSize && groups.length > 0) {
-                            // If last group is too small, try to merge with the previous one
-                            const lastGroup = groups[groups.length - 1];
-                            if ((lastGroup.playerIds.length + currentGroupPlayers.length) <= maxGroupSize) {
-                                lastGroup.playerIds.push(...currentGroupPlayers);
-                                currentGroupPlayers = []; // Merged
-                            }
-                            // If it cannot merge, it will form a small group, which might be acceptable if no other option
-                        }
-
-                        if (currentGroupPlayers.length > 0) {
-                            groups.push({
-                                id: generateUUID(),
-                                name: `Group ${String.fromCharCode(65 + groupCounter)}`, // A, B, C...
-                                playerIds: currentGroupPlayers,
-                            });
-                            groupCounter++;
-                        }
+                    // 4. Distribute players round-robin into the determined number of groups
+                    for (let i = 0; i < totalPlayers; i++) {
+                        groups[i % numGroups].playerIds.push(shuffledPlayerIds[i]);
                     }
 
-                    // Re-distribute players if any group is too small (e.g., has only 1-3 players left and can be merged)
-                    // This is a heuristic and might not always result in perfect groups if player counts are awkward
-                    for (let i = 0; i < groups.length; i++) {
-                        if (groups[i].playerIds.length < minGroupSize && groups[i].playerIds.length > 0) {
-                            if (i + 1 < groups.length) { // Try to merge with next group
-                                const nextGroup = groups[i + 1];
-                                if ((groups[i].playerIds.length + nextGroup.playerIds.length) <= maxGroupSize) {
-                                    groups[i].playerIds.push(...nextGroup.playerIds);
-                                    groups.splice(i + 1, 1);
-                                    i--; // Re-check current (now larger) group
-                                }
-                            } else if (i > 0) { // Try to merge with previous group if it's the last small group
-                                const prevGroup = groups[i - 1];
-                                if ((prevGroup.playerIds.length + groups[i].playerIds.length) <= maxGroupSize) {
-                                    prevGroup.playerIds.push(...groups[i].playerIds);
-                                    groups.splice(i, 1);
-                                    i--; // The previous group absorbed this one, so re-check previous if needed
-                                }
-                            }
-                        }
+                    // 5. Final Validation (should pass if numGroups was chosen correctly)
+                    const invalidGroups = groups.filter(g => g.playerIds.length < minGroupSize || g.playerIds.length > maxGroupSize);
+                    if (invalidGroups.length > 0) {
+                        console.error(`Internal Grouping Error: Groups formed outside valid size for ${category} - ${type}:`, invalidGroups);
+                        // This indicates a bug in the numGroups calculation or distribution logic that needs fixing.
+                        finalGroupedPlayers[category][type] = []; 
+                    } else {
+                        finalGroupedPlayers[category][type] = groups;
                     }
-
-                    groupedPlayers[category][type] = groups;
                 }
             }
-            return groupedPlayers;
+            return finalGroupedPlayers;
         };
 
 
@@ -655,10 +647,10 @@
                         };
 
                         parsedData.forEach(row => {
-                            // Using headers from the provided image: Name, mobilenumber, category, Paid(Y/N)
+                            // Corrected to use 'MobileNumber' and 'Categories' based on the image and warnings
                             const name = row['Name'];
-                            const mobile = row['mobilenumber'];
-                            const rawCategoryFromCsv = row['category']; // Get raw category string
+                            const mobile = row['MobileNumber']; 
+                            const rawCategoryFromCsv = row['Categories']; 
                             const feePaidStatus = row['Paid(Y/N)']?.toUpperCase() === 'Y';
 
                             const categories = [];
@@ -702,6 +694,41 @@
                     };
                     reader.readAsText(file);
                 }
+            };
+
+            const handleExportPlayersToCsv = () => {
+                if (players.length === 0) {
+                    alert('No players to export.');
+                    return;
+                }
+
+                const headers = ["Player Name", "Mobile Number", "Category 1", "Category 2", "Fee Paid"];
+                const csvRows = [headers.join(',')];
+
+                players.forEach(player => {
+                    // Extract up to two categories
+                    const category1 = player.categories[0] || '';
+                    const category2 = player.categories[1] || '';
+                    const feePaidStatus = player.feePaid ? 'Y' : 'N';
+                    
+                    csvRows.push([
+                        `"${player.name.replace(/"/g, '""')}"`, // Handle commas and quotes in name
+                        `"${player.mobile}"`,
+                        `"${category1}"`,
+                        `"${category2}"`,
+                        `"${feePaidStatus}"`
+                    ].join(','));
+                });
+
+                const csvString = csvRows.join('\n');
+                const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.setAttribute('href', url);
+                link.setAttribute('download', 'registered_players.csv');
+                link.click();
+                URL.revokeObjectURL(url);
+                alert('Players exported to CSV successfully!');
             };
 
             const groupedPlayers = players.reduce((acc, player) => {
@@ -830,7 +857,18 @@
                                 bg-slate-700 rounded-lg cursor-pointer transition-colors"
                             aria-label="Upload Players CSV"
                         />
-                        <p className="text-xs text-slate-500 mt-2">Expected CSV headers: "Name", "mobilenumber", "category", "Paid(Y/N)". Category values like "40" or "40+" will map to "40+". Only adds new players. Players can be manually edited to add a second category if applicable.</p>
+                        <p className="text-xs text-slate-500 mt-2">Expected CSV headers: "Name", "MobileNumber", "Categories", "Paid(Y/N)". Category values like "40" or "40+" will map to "40+". Only adds new players. Players can be manually edited to add a second category if applicable.</p>
+                    </div>
+
+                    <div className="flex justify-end mb-4">
+                        <button
+                            onClick={handleExportPlayersToCsv}
+                            className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={players.length === 0}
+                            aria-label="Export Players to CSV"
+                        >
+                            Export Players to CSV
+                        </button>
                     </div>
 
                     <h4 className="text-lg font-semibold text-slate-200 mb-3">Registered Players</h4>
@@ -838,7 +876,7 @@
                         <p className="text-slate-400">No players registered yet.</p>
                     ) : (
                         <div className="overflow-x-auto rounded-lg shadow">
-                            <table className="min-w-full divide-y divide-slate-700" aria-label="Registered Players">
+                            <table className="min-w-full divide-y divide-slate-700" aria-label="Registered Players Table">
                                 <thead className="bg-slate-900">
                                     <tr>
                                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
@@ -1198,21 +1236,22 @@
                     p.categories.includes(category)
                 );
 
-                if (playersForCategoryAndType.length < 4) { // Minimum 4 players to form a group of 4-6
-                    alert(`Not enough players for category "${category}" and type "${type}". Need at least 4 players. Found: ${playersForCategoryAndType.length}`);
+                // Minimum 4 players to form a group of 4-6
+                const MIN_GROUP_SIZE = 4; 
+                const MAX_GROUP_SIZE = 6;
+
+                if (playersForCategoryAndType.length < MIN_GROUP_SIZE) { 
+                    alert(`Not enough players for category "${category}" and type "${type}". Need at least ${MIN_GROUP_SIZE} players. Found: ${playersForCategoryAndType.length}`);
                     return;
                 }
                 
-                // For doubles types, we expect players to be manually paired up or handle it outside this basic grouping logic.
-                // For simplicity, treating all players as individuals for grouping and matches in this basic round-robin.
-                // A more advanced system would require explicit team registration for doubles.
                 const playerIdsForGrouping = playersForCategoryAndType.map(p => p.id);
 
-                const grouped = groupPlayersRandomly({[category]: {[type]: playerIdsForGrouping}}, 4, 6);
+                const grouped = groupPlayersRandomly({[category]: {[type]: playerIdsForGrouping}}, MIN_GROUP_SIZE, MAX_GROUP_SIZE);
                 const groupsForCurrentCategoryType = grouped[category][type];
 
                 if (!groupsForCurrentCategoryType || groupsForCurrentCategoryType.length === 0) {
-                     alert(`Could not form valid groups for category "${category}" and type "${type}" with the current players. Consider adjusting player count.`);
+                     alert(`Could not form valid groups for category "${category}" and type "${type}" with ${playersForCategoryAndType.length} players (min: ${MIN_GROUP_SIZE}, max: ${MAX_GROUP_SIZE}). Consider adjusting player count.`);
                      return;
                 }
 
@@ -1338,6 +1377,16 @@
 
         const PlayerView = () => { // No longer receives tournamentData as a prop, fetches directly
             const [localTournamentData, setLocalTournamentData] = useState(null);
+            const [selectedFilterCategory, setSelectedFilterCategory] = useState('All'); // New state for players filtering
+            const [selectedFixtureFilterCategory, setSelectedFixtureFilterCategory] = useState('All'); // New state for fixtures filtering
+
+            // Define getPlayerName here, unconditionally, before any early returns
+            const getPlayerName = useCallback((playerId) => {
+                // Safely access players array even if localTournamentData is null or players is undefined
+                const playersArray = localTournamentData?.players || [];
+                const player = playersArray.find(p => p.id === playerId);
+                return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
+            }, [localTournamentData]); // Depend on the entire localTournamentData object
 
             const fetchTournamentData = useCallback(() => {
                 const storedData = getLocalStorage(LS_TOURNAMENT_DATA, null);
@@ -1361,14 +1410,6 @@
                 window.addEventListener('storage', handleStorageChange);
                 return () => window.removeEventListener('storage', handleStorageChange);
             }, [fetchTournamentData]);
-
-            // Define getPlayerName here, unconditionally, before any early returns
-            const getPlayerName = useCallback((playerId) => {
-                // Safely access players array even if localTournamentData is null or players is undefined
-                const playersArray = localTournamentData?.players || [];
-                const player = playersArray.find(p => p.id === playerId);
-                return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
-            }, [localTournamentData]); // Depend on the entire localTournamentData object
 
 
             if (!localTournamentData || !localTournamentData.settings || !localTournamentData.settings.name) {
@@ -1400,19 +1441,25 @@
                 );
             }
 
+            // Filter players based on selectedFilterCategory
+            const filteredPlayers = selectedFilterCategory === 'All'
+                ? localTournamentData.players
+                : localTournamentData.players.filter(player => player.categories.includes(selectedFilterCategory));
 
-            // const getPlayerName = useCallback((playerId) => { // This was moved
-            //     const player = localTournamentData.players.find(p => p.id === playerId);
-            //     return player ? player.name : `Unknown Player (${playerId ? playerId.substring(0,4) : 'N/A'})`;
-            // }, [localTournamentData.players]);
 
-            const groupedPlayers = localTournamentData.players.reduce((acc, player) => {
+            const groupedPlayers = filteredPlayers.reduce((acc, player) => {
                 if (!acc[player.mobile]) {
                     acc[player.mobile] = [];
                 }
                 acc[player.mobile].push(player);
                 return acc;
             }, {});
+
+            // Filter fixtures based on selectedFixtureFilterCategory
+            const filteredFixtures = selectedFixtureFilterCategory === 'All'
+                ? localTournamentData.fixtures
+                : localTournamentData.fixtures.filter(catFix => catFix.category === selectedFixtureFilterCategory);
+
 
             return (
                 <div className="container mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
@@ -1431,9 +1478,28 @@
                     </div>
 
                     <div className="bg-slate-800 p-6 rounded-lg shadow-lg">
-                        <h3 className="2xl font-semibold text-slate-100 mb-4">Registered Players</h3>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="2xl font-semibold text-slate-100">Registered Players</h3>
+                            {localTournamentData.settings.categories.length > 0 && (
+                                <div className="flex items-center space-x-2">
+                                    <label htmlFor="categoryFilter" className="text-slate-300 text-sm">Filter by Category:</label>
+                                    <select
+                                        id="categoryFilter"
+                                        value={selectedFilterCategory}
+                                        onChange={(e) => setSelectedFilterCategory(e.target.value)}
+                                        className="py-2 px-3 bg-slate-700 border border-slate-600 rounded-lg shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500 text-white sm:text-sm"
+                                        aria-label="Filter players by category"
+                                    >
+                                        <option value="All">All Categories</option>
+                                        {localTournamentData.settings.categories.map(category => (
+                                            <option key={category} value={category}>{category}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
                         {Object.keys(groupedPlayers).length === 0 ? (
-                            <p className="text-slate-400">No players registered yet.</p>
+                            <p className="text-slate-400">No players registered yet or no players match the selected category.</p>
                         ) : (
                             <div className="overflow-x-auto rounded-lg shadow">
                                 <table className="min-w-full divide-y divide-slate-700" aria-label="Registered Players Table">
@@ -1477,12 +1543,32 @@
                     </div>
 
                     <div className="bg-slate-800 p-6 rounded-lg shadow-lg">
-                        <h3 className="2xl font-semibold text-slate-100 mb-4">Match Fixtures</h3>
-                        {localTournamentData.fixtures.length === 0 ? (
-                            <p className="text-slate-400">No fixtures published yet.</p>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="2xl font-semibold text-slate-100">Match Fixtures</h3>
+                            {localTournamentData.settings.categories.length > 0 && (
+                                <div className="flex items-center space-x-2">
+                                    <label htmlFor="fixtureCategoryFilter" className="text-slate-300 text-sm">Filter by Category:</label>
+                                    <select
+                                        id="fixtureCategoryFilter"
+                                        value={selectedFixtureFilterCategory}
+                                        onChange={(e) => setSelectedFixtureFilterCategory(e.target.value)}
+                                        className="py-2 px-3 bg-slate-700 border border-slate-600 rounded-lg shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500 text-white sm:text-sm"
+                                        aria-label="Filter fixtures by category"
+                                    >
+                                        <option value="All">All Categories</option>
+                                        {localTournamentData.settings.categories.map(category => (
+                                            <option key={category} value={category}>{category}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+
+                        {filteredFixtures.length === 0 ? (
+                            <p className="text-slate-400">No fixtures published yet or no fixtures match the selected category.</p>
                         ) : (
                             <div className="space-y-6">
-                                {localTournamentData.fixtures.map(catFix => (
+                                {filteredFixtures.map(catFix => (
                                     <div key={`${catFix.category}-${catFix.tournamentType}`} className="bg-slate-700 p-4 rounded-lg">
                                         <h4 className="text-xl font-semibold text-slate-100 mb-3">{catFix.category} - {catFix.tournamentType}</h4>
                                         {catFix.groups.map(group => (
@@ -1515,25 +1601,42 @@
                                                                 .filter(match =>
                                                                     group.playerIds.includes(match.player1Id) && group.playerIds.includes(match.player2Id)
                                                                 )
-                                                                .map(match => (
-                                                                    <tr key={match.id} className="hover:bg-slate-600">
-                                                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-200">
-                                                                            {getPlayerName(match.player1Id)} vs {getPlayerName(match.player2Id)}
-                                                                        </td>
-                                                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-300">
-                                                                            {getPlayerName(match.player1Id)}
-                                                                        </td>
-                                                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-300">
-                                                                            {getPlayerName(match.player2Id)}
-                                                                        </td>
-                                                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-200">
-                                                                            {match.score1 !== null && match.score2 !== null ? `${match.score1} - ${match.score2}` : 'N/A'}
-                                                                        </td>
-                                                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-300 capitalize">
-                                                                            {match.status}
-                                                                        </td>
-                                                                    </tr>
-                                                                ))}
+                                                                .map(match => {
+                                                                    const statusColor = match.status === 'completed' ? 'bg-green-600' : match.status === 'in-progress' ? 'bg-sky-600' : 'bg-slate-600';
+                                                                    const statusText = match.status.charAt(0).toUpperCase() + match.status.slice(1);
+                                                                    const isCompleted = match.status === 'completed';
+
+                                                                    return (
+                                                                        <tr key={match.id} className={`hover:bg-slate-600 ${isCompleted ? 'border-l-4 border-green-500' : ''}`}>
+                                                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-200">
+                                                                                {getPlayerName(match.player1Id)} vs {getPlayerName(match.player2Id)}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-300">
+                                                                                {getPlayerName(match.player1Id)}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-300">
+                                                                                {getPlayerName(match.player2Id)}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 whitespace-nowrap text-sm">
+                                                                                {isCompleted && match.score1 !== null && match.score2 !== null ? (
+                                                                                    <span className="font-bold text-green-300">{match.score1} - {match.score2}</span>
+                                                                                ) : (
+                                                                                    'N/A'
+                                                                                )}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 whitespace-nowrap text-sm">
+                                                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor} text-white`}>
+                                                                                    {statusText}
+                                                                                    {isCompleted && (
+                                                                                        <svg className="ml-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                                                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                                                        </svg>
+                                                                                    )}
+                                                                                </span>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
                                                         </tbody>
                                                     </table>
                                                 </div>
